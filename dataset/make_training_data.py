@@ -64,6 +64,9 @@ def make_data(dom_size, n_domains, max_obs, max_obs_size, n_traj,
                 # Invert domain image => 0 = free, 1 = obstacle
                 image = 1 - im
                 # Resize domain and goal images and concate
+                image = image.astype(np.float32)
+                value_prior = value_prior.astype(np.float32)
+                
                 image_data = np.resize(image, (1, 1, dom_size[0], dom_size[1]))
                 value_data = np.resize(value_prior,
                                        (1, 1, dom_size[0], dom_size[1]))

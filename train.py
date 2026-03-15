@@ -45,6 +45,10 @@ def train(net: VIN, trainloader, config, criterion, optimizer):
         time_duration = time.time() - start_time
         # Print epoch logs
         print_stats(epoch, avg_loss, avg_error, num_batches, time_duration)
+        scheduler.step(avg_loss / num_batches) #gozde
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"  LR: {current_lr}")
+
     print('\nFinished training. \n')
 
 
@@ -111,6 +115,7 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
     # Optimizer
     optimizer = optim.RMSprop(net.parameters(), lr=config.lr, eps=1e-6)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5) #gozde
     # Dataset transformer: torchvision.transforms
     transform = None
     # Define Dataset

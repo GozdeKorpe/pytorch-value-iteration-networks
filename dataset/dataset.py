@@ -34,7 +34,7 @@ class GridworldData(data.Dataset):
         # Apply target transform if we have one
         if self.target_transform is not None:
             label = self.target_transform(label)
-        return img, int(s1), int(s2), int(label)
+        return img, torch.tensor(int(s1.item())), torch.tensor(int(s2.item())), torch.tensor(int(label.item())) #gozde tensor olarak döndürdüm
 
     def __len__(self):
         return self.images.shape[0]

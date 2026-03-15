@@ -26,7 +26,7 @@ class GridWorld:
         return np.ravel_multi_index([row, col], (self.n_row, self.n_col), order='F')
 
     def state_to_loc(self, state):
-        return np.unravel_index(state, (self.n_col, self.n_row), order='F')
+        return np.unravel_index(state, (self.n_row, self.n_col), order='F')
 
     def set_vals(self):
         # Setup function to initialize all necessary
@@ -179,16 +179,13 @@ class GridWorld:
 
 
 def trace_path(pred, source, target):
-    # traces back shortest path from
-    #  source to target given pred
-    #  (a predicessor list)
     max_len = 1000
-    path = np.zeros((max_len, 1))
+    path = np.zeros(max_len, dtype=int)  # 1D, not (max_len, 1)
     i = max_len - 1
     path[i] = target
     while path[i] != source and i > 0:
         try:
-            path[i - 1] = pred[int(path[i])]
+            path[i - 1] = pred[path[i]]
             i -= 1
         except Exception as e:
             return []
@@ -231,5 +228,5 @@ def sample_trajectory(M: GridWorld, n_states):
             row_m[i, r[i]] = 1
             col_m[i, c[i]] = 1
         states_one_hot.append(np.hstack((row_m, col_m)))
-        states_xy.append(np.hstack((r, c)))
+        states_xy.append(np.column_stack((r, c)))
     return states_xy, states_one_hot
