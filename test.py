@@ -1,177 +1,239 @@
-import sys
 import argparse
-
+import numpy as np
+import torch
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-import numpy as np
-
-import torch
-from torch.autograd import Variable
-
 from dataset.dataset import *
-from utility.utils import *
 from model import *
-
 from domains.gridworld import *
 from generators.obstacle_gen import *
 
 
-def main(config,
-         n_domains=100,
-         max_obs=30,
-         max_obs_size=None,
-         n_traj=1,
-         n_actions=8):
-         
-    # Correct vs total:
-    correct, total = 0.0, 0.0
-    # Instantiate a VIN model
-    vin: VIN = VIN(config)
-    # Load model parameters
-    vin.load_state_dict(torch.load(config.weights))
-    # Automatically select device to make the code device agnostic
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    vin = vin.to(device)
-   
-
-    for dom in range(n_domains):
-        # Randomly select goal position
-        goal = [
-            np.random.randint(config.imsize),
-            np.random.randint(config.imsize)
-        ]
-        # Generate obstacle map
-        obs = obstacles([config.imsize, config.imsize], goal, max_obs_size)
-        # Add obstacles to map
-        n_obs = obs.add_n_rand_obs(max_obs)
-        # Add border to map
-        border_res = obs.add_border()
-        # Ensure we have valid map
-        if n_obs == 0 or not border_res:
-            continue
-        # Get final map
-        im = obs.get_final()
-
-        # Generate gridworld from obstacle map
-        G = GridWorld(im, goal[0], goal[1])
-        # Get value prior
-        value_prior = G.get_reward_prior()
-        # Sample random trajectories to our goal
-        states_xy, states_one_hot = sample_trajectory(G, n_traj)
-        
-
-        for i in range(n_traj):
-            if len(states_xy[i]) > 1:
-
-                # Get number of steps to goal
-                L = len(states_xy[i]) * 3  #gozde 2ydi
-                # Allocate space for predicted steps
-                pred_traj = np.zeros((L, 2))
-                # Set starting position
-                pred_traj[0, :] = states_xy[i][0, :]
-
-                for j in range(1, L):
-                    # Transform current state data
-                    state_data = pred_traj[j - 1, :]
-                    state_data = state_data.astype(int)
-                    # Transform domain to Networks expected input shape
-                    im_data = G.image.astype(np.int32)
-                    im_data = 1 - im_data
-                    im_data = im_data.reshape(1, 1, config.imsize,
-                                              config.imsize)
-                    # Transfrom value prior to Networks expected input shape
-                    value_data = value_prior.astype(np.int32)
-                    value_data = value_data.reshape(1, 1, config.imsize,
-                                                    config.imsize)
-                    # Get inputs as expected by network
-                    X_in = torch.from_numpy(np.append(im_data, value_data, axis=1))
-                    S1_in = torch.from_numpy(np.array([[state_data[0]]]))
-                    S2_in = torch.from_numpy(np.array([[state_data[1]]]))
-
-                    # Get input batch
-                    X_in, S1_in, S2_in = [d.float().to(device) for d in [X_in, S1_in, S2_in]]
-
-                    # Forward pass in our neural net
-                    _, predictions = vin(X_in, S1_in, S2_in, config.k)
-                    _, indices = torch.max(predictions.cpu(), 1, keepdim=True)
-                    a = indices.data.numpy()[0][0]
-                    # Transform prediction to indices
-                   
-                    rw = np.where(G.state_map_row == state_data[0])
-                    cl = np.where(G.state_map_col == state_data[1])
-                    
-                    try:
-                        s = G.map_ind_to_state(int(pred_traj[j - 1, 0]), int(pred_traj[j - 1, 1]))
-                    except IndexError:
-                        break
-                    ns = G.sample_next_state(s, a)
-                    nr, nc = G.get_coords(np.array([ns]))
-                    nr, nc = int(nr[0]), int(nc[0])          # extract scalars
-                    pred_traj[j, 0] = nr
-                    pred_traj[j, 1] = nc
-                    if nr == goal[0] and nc == goal[1]:
-                        pred_traj[j + 1:, 0] = nr
-                        pred_traj[j + 1:, 1] = nc
-                        break
-                    
-                    
-                # Plot optimal and predicted path (also start, end)
-                if int(pred_traj[-1, 0]) == goal[0] and int(pred_traj[-1, 1]) == goal[1]: #gozde int ekledim
-                    correct += 1
-                total += 1
-                if config.plot == True:
-                    visualize(G.image.T, states_xy[i], pred_traj)
-        sys.stdout.write("\r" + str(int(
-            (float(dom) / n_domains) * 100.0)) + "%")
-        sys.stdout.flush()
-    sys.stdout.write("\n")
-    print("\ncorrect =", correct)
-    print("total =", total)
-    print('Rollout Accuracy: {:.2f}%'.format(100 * (correct / total)))
-
-
+# =========================
+# VISUALIZATION (FIGURE 3)
+# =========================
 def visualize(dom, states_xy, pred_traj):
     fig, ax = plt.subplots()
-    implot = plt.imshow(dom, cmap="Greys_r")
+    plt.imshow(dom, cmap="Greys_r")
+
     ax.plot(states_xy[:, 0], states_xy[:, 1], c='b', label='Optimal Path')
-    ax.plot(
-        pred_traj[:, 0], pred_traj[:, 1], '-X', c='r', label='Predicted Path')
+    ax.plot(pred_traj[:, 0], pred_traj[:, 1], '-X', c='r', label='Predicted Path')
+
     ax.plot(states_xy[0, 0], states_xy[0, 1], '-o', label='Start')
     ax.plot(states_xy[-1, 0], states_xy[-1, 1], '-s', label='Goal')
-    legend = ax.legend(loc='upper right', shadow=False)
-    for label in legend.get_texts():
-        label.set_fontsize('x-small')   # The legend text size
-    for label in legend.get_lines():
-        label.set_linewidth(0.5)        # The legend line width
+
+    ax.legend(loc='upper right', fontsize='small')
+
     plt.draw()
     plt.waitforbuttonpress(0)
     plt.close(fig)
 
 
+# =========================
+# DATASET LOSS (SUPERVISED)
+# =========================
+def compute_prediction_loss(vin, config, device,
+                           n_domains=100,
+                           max_obs=2,
+                           n_traj=1):
+
+    vin.eval()
+    total_loss = 0.0
+    total_samples = 0
+
+    with torch.no_grad():
+
+        for _ in range(n_domains):
+
+            goal = [np.random.randint(config.imsize),
+                    np.random.randint(config.imsize)]
+
+            obs = obstacles([config.imsize, config.imsize], goal)
+            n_obs = obs.add_n_rand_obs(max_obs)
+            if n_obs == 0 or not obs.add_border():
+                continue
+
+            im = obs.get_final()
+
+            G = GridWorld(im, goal[0], goal[1])
+            value_prior = G.get_reward_prior()
+
+            states_xy, states_one_hot = sample_trajectory(G, n_traj)
+
+            for i in range(n_traj):
+
+                traj = states_xy[i]
+
+                if len(traj) <= 1:
+                    continue
+
+                for t in range(len(traj) - 1):
+
+                    curr = traj[t]
+
+                    im_data = 1 - G.image.astype(np.int32)
+                    im_data = im_data.reshape(1, 1, config.imsize, config.imsize)
+
+                    value_data = value_prior.astype(np.int32)
+                    value_data = value_data.reshape(1, 1, config.imsize, config.imsize)
+
+                    X_in = torch.from_numpy(np.append(im_data, value_data, axis=1)).float().to(device)
+
+                    S1_in = torch.tensor([[curr[0]]]).float().to(device)
+                    S2_in = torch.tensor([[curr[1]]]).float().to(device)
+
+                    _, predictions = vin(X_in, S1_in, S2_in, config.k)
+
+                    # ground truth action
+                    gt = states_one_hot[i][t]
+                    gt_action = int(np.argmax(gt))
+
+                    if gt_action >= predictions.shape[1]:
+                        continue
+
+                    gt_tensor = torch.tensor([gt_action]).to(device)
+
+                    loss = F.cross_entropy(predictions, gt_tensor)
+
+                    total_loss += loss.item()
+                    total_samples += 1
+
+    return total_loss / total_samples if total_samples > 0 else 0
+
+
+# =========================
+# ROLLOUT EVALUATION
+# =========================
+def rollout_eval(vin, config, device,
+                 n_domains=100,
+                 max_obs=2,
+                 n_traj=1):
+
+    vin.eval()
+    correct, total = 0.0, 0.0
+    traj_diffs = []
+
+    with torch.no_grad():
+
+        for _ in range(n_domains):
+
+            goal = [np.random.randint(config.imsize),
+                    np.random.randint(config.imsize)]
+
+            obs = obstacles([config.imsize, config.imsize], goal)
+            n_obs = obs.add_n_rand_obs(max_obs)
+            if n_obs == 0 or not obs.add_border():
+                continue
+
+            im = obs.get_final()
+
+            G = GridWorld(im, goal[0], goal[1])
+            value_prior = G.get_reward_prior()
+
+            states_xy, _ = sample_trajectory(G, n_traj)
+
+            for i in range(n_traj):
+
+                if len(states_xy[i]) <= 1:
+                    continue
+
+                optimal_len = len(states_xy[i])
+
+                L = optimal_len * 3
+                pred_traj = np.zeros((L, 2))
+                pred_traj[0] = states_xy[i][0]
+
+                pred_len = None
+
+                for j in range(1, L):
+
+                    curr = pred_traj[j - 1].astype(int)
+
+                    im_data = 1 - G.image.astype(np.int32)
+                    im_data = im_data.reshape(1, 1, config.imsize, config.imsize)
+
+                    value_data = value_prior.astype(np.int32)
+                    value_data = value_data.reshape(1, 1, config.imsize, config.imsize)
+
+                    X_in = torch.from_numpy(np.append(im_data, value_data, axis=1)).float().to(device)
+
+                    S1_in = torch.tensor([[curr[0]]]).float().to(device)
+                    S2_in = torch.tensor([[curr[1]]]).float().to(device)
+
+                    _, predictions = vin(X_in, S1_in, S2_in, config.k)
+                    a = torch.argmax(predictions, dim=1).item()
+
+                    s = G.map_ind_to_state(int(curr[0]), int(curr[1]))
+                    ns = G.sample_next_state(s, a)
+
+                    nr, nc = G.get_coords(np.array([ns]))
+                    nr, nc = int(nr[0]), int(nc[0])
+
+                    pred_traj[j] = [nr, nc]
+
+                    if nr == goal[0] and nc == goal[1]:
+                        pred_len = j + 1
+                        break
+
+                if pred_len is None:
+                    pred_len = len(pred_traj)
+
+                if pred_traj[j][0] == goal[0] and pred_traj[j][1] == goal[1]:
+                    correct += 1
+
+                total += 1
+                traj_diffs.append(abs(pred_len - optimal_len))
+
+                if config.plot:
+                    visualize(G.image.T, states_xy[i], pred_traj)
+
+    success_rate = correct / total if total > 0 else 0
+    traj_diff = np.mean(traj_diffs) if len(traj_diffs) > 0 else 0
+
+    return success_rate, traj_diff
+
+
+# =========================
+# MAIN (MULTI-RUN)
+# =========================
 if __name__ == '__main__':
-    # Parsing training parameters
+
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--weights',
-        type=str,
-        default='trained/vin_8x8.pth',
-        help='Path to trained weights')
+
+    parser.add_argument('--weights', type=str, default='trained/vin_8x8.pth')
+    parser.add_argument('--imsize', type=int, default=8)
+    parser.add_argument('--k', type=int, default=10)
+    parser.add_argument('--l_i', type=int, default=2)
+    parser.add_argument('--l_h', type=int, default=150)
+    parser.add_argument('--l_q', type=int, default=10)
+
     parser.add_argument('--plot', action='store_true', default=False)
-    parser.add_argument('--imsize', type=int, default=8, help='Size of image')
-    parser.add_argument(
-        '--k', type=int, default=10, help='Number of Value Iterations')
-    parser.add_argument(
-        '--l_i', type=int, default=2, help='Number of channels in input layer')
-    parser.add_argument(
-        '--l_h',
-        type=int,
-        default=150,
-        help='Number of channels in first hidden layer')
-    parser.add_argument(
-        '--l_q',
-        type=int,
-        default=10,
-        help='Number of channels in q layer (~actions) in VI-module')
+    parser.add_argument('--n_runs', type=int, default=5)
+
     config = parser.parse_args()
-    # Compute Paths generated by network and plot
-    main(config, n_domains=100, max_obs=2, n_traj=1)
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    vin = VIN(config)
+    vin.load_state_dict(torch.load(config.weights))
+    vin = vin.to(device)
+
+    all_losses = []
+    all_success = []
+    all_traj = []
+
+    for run in range(config.n_runs):
+        print(f"\nRun {run+1}/{config.n_runs}")
+
+        loss = compute_prediction_loss(vin, config, device)
+        success, traj_diff = rollout_eval(vin, config, device)
+
+        all_losses.append(loss)
+        all_success.append(success)
+        all_traj.append(traj_diff)
+
+    print("\n===== FINAL AVERAGED RESULTS =====")
+    print(f"Prediction Loss: {np.mean(all_losses):.4f} ± {np.std(all_losses):.4f}")
+    print(f"Success Rate: {np.mean(all_success)*100:.2f}% ± {np.std(all_success)*100:.2f}%")
+    print(f"Trajectory Difference: {np.mean(all_traj):.2f} ± {np.std(all_traj):.2f}")
