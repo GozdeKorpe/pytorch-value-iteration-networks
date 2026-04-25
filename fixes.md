@@ -31,3 +31,45 @@ Because the coordinate and path bugs were present during dataset generation, all
 State position values S1 and S2 were returned as plain Python integers instead of PyTorch tensors, meaning they could not be properly moved to the GPU or processed by the model. This caused the model to receive malformed inputs during every training step, creating a hard ceiling on accuracy regardless of training time.
 5. Missing inference settings (test.py)
 The model was never switched to evaluation mode and gradient tracking was never disabled during testing, wasting memory and potentially affecting prediction consistency. Several smaller bugs including deprecated NumPy types, misplaced print statements, and a variable shadowing issue were also fixed to stabilize the evaluation pipeline.
+
+6. Invalid Environment Generation
+Goal sometimes inside obstacles
+Start position sometimes equal to goal
+
+👉 Fix:
+
+Enforced:
+goal ∉ obstacles
+start ≠ goal
+valid trajectories only
+🔹 7. Infinite Loop in Data Generation
+Strict validation caused very slow dataset generation
+
+👉 Fix:
+
+Introduced bounded retries (max_attempts)
+Skipped invalid maps after threshold
+🔹 8. Degenerate Trajectories
+Some trajectories were:
+length ≤ 1
+trivial (start = goal)
+
+👉 Fix:
+
+Filtered out invalid trajectories
+Ensured only meaningful samples used
+🔹 9. Deterministic Evaluation Issue
+Dataset evaluation produced identical results across runs
+
+👉 Fix:
+
+Recognized evaluation is deterministic
+Removed unnecessary averaging and std reporting
+🔹 10. Visualization Issues
+Always visualizing same sample
+Poor interpretability
+
+👉 Fix:
+
+Added random sampling for visualization
+Used rollout-based visualization for cleaner trajectories

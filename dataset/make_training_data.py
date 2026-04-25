@@ -54,10 +54,23 @@ def make_data(dom_size, n_domains, max_obs, max_obs_size, n_traj,
         G = GridWorld(im, goal[0], goal[1])
         # Get value prior
         value_prior = G.t_get_reward_prior()
+        # Ensure goal is not on an obstacle
+        if im[goal[0], goal[1]] == 0:
+            continue
+
+        # Ensure start candidates exist and are not the goal
+        freespace = list(zip(*np.where(im == 1)))
+        freespace = [(r, c) for r, c in freespace if (r, c) != (goal[0], goal[1])]
+        if len(freespace) == 0:
+            continue
         # Sample random trajectories to our goal
         states_xy, states_one_hot = sample_trajectory(G, n_traj)
         for i in range(n_traj):
             if len(states_xy[i]) > 1:
+                # Ensure start != goal
+                start = states_xy[i][0]
+                if start[0] == goal[0] and start[1] == goal[1]:
+                    continue
                 # Get optimal actions for each state
                 actions = extract_action(states_xy[i])
                 ns = states_xy[i].shape[0] - 1
